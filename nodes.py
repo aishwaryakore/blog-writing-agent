@@ -2,6 +2,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 from langgraph.types import Send
 from pathlib import Path
+from prompts import ORCHESTRATOR_PROMPT, WORKER_PROMPT
 
 from models import Plan, State
 
@@ -10,7 +11,7 @@ llm = ChatOpenAI(model="gpt-4.1-mini")
 def orchestrator(state: State) -> dict:
     plan = llm.with_structured_output(Plan).invoke(
         [
-            SystemMessage(content="Create a blog plan with 5-7 sections on the following topic."),
+            SystemMessage(content=ORCHESTRATOR_PROMPT),
             HumanMessage(content=f"Topic: {state['topic']}")
         ]
     )
@@ -29,7 +30,7 @@ def worker(payload: dict) -> dict:
 
     section_markdown = llm.invoke(
         [
-            SystemMessage(content="Write one clean Markdown section."),
+            SystemMessage(content=WORKER_PROMPT),
             HumanMessage(content=(
                 f"Blog: {plan.blog_title}\n"
                 f"Topic: {topic}\n\n"
