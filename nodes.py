@@ -7,7 +7,8 @@ from typing import List
 from langchain_community.tools.tavily_search import TavilySearchResults
 
 from models import Plan, State, RouterDecision, EvidencePack, Task, EvidenceItem, EvalResult, SectionFeedback
-
+from datetime import datetime
+import json
 from dotenv import load_dotenv
 load_dotenv()
 
@@ -236,6 +237,23 @@ def reducer_node(state: State) -> dict:
         Path(filename).write_text(final_md, encoding="utf-8")
     except Exception as e:
         print(f"Warning: could not save file: {e}")
+
+    meta = {
+        "topic": state["topic"],
+        "generated_at": datetime.utcnow().isoformat() + "Z",
+        "mode": state.get("mode", ""),
+        "blog_kind": plan.blog_kind,
+        "audience": plan.audience,
+        "tone": plan.tone,
+        "num_sections": len(plan.tasks),
+        "word_count": len(final_md.split()),
+        "sources": [e.url for e in state.get("evidence", [])],
+    }
+    meta_filename = f"{plan.blog_title}_meta.json"
+    try:
+        Path(meta_filename).write_text(json.dumps(meta, indent=2), encoding="utf-8")
+    except Exception as e:
+        print(f"Warning: could not save metadata file: {e}")
 
     return {"final": final_md}
 
