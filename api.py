@@ -1,3 +1,5 @@
+from typing import Optional
+
 from dotenv import load_dotenv
 load_dotenv()
 
@@ -22,8 +24,11 @@ workflow = create_workflow()
 
 class GenerateRequest(BaseModel):
     topic: str
+    tone: Optional[str] = None
+    audience: Optional[str] = None
+    length: Optional[str] = None
 
-def get_initial_state(topic: str) -> dict:
+def get_initial_state(topic: str, tone=None, audience=None, length=None) -> dict:
     return {
         "topic": topic,
         "mode": "",
@@ -33,6 +38,9 @@ def get_initial_state(topic: str) -> dict:
         "plan": None,
         "sections": [],
         "final": "",
+        "tone": tone,
+        "audience": audience,
+        "length": length
     }
 
 NODE_LABELS = {
@@ -43,7 +51,7 @@ NODE_LABELS = {
     "reducer":      "📝 Assembling final blog post...",
 }
 
-async def stream_blog(topic: str):
+async def stream_blog(topic: str, tone=None, audience=None, length=None):
     """Generator that runs the LangGraph workflow and yields SSE events."""
 
     initial_state = get_initial_state(topic)
@@ -118,7 +126,7 @@ async def generate(request: GenerateRequest):
       - done:     { blog }           — final markdown blog post
       - error:    { message }        — something went wrong
     """
-    return EventSourceResponse(stream_blog(request.topic))
+    return EventSourceResponse(stream_blog(request.topic, request.tone, request.audience, request.length))
 
 
 @app.get("/health")

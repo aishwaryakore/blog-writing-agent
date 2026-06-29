@@ -57,3 +57,7 @@ class State(TypedDict):
     plan: Plan
     sections: Annotated[List[str], operator.add]
     final: str
+    # User configurable parameters (OPTIONAL)
+    tone: Optional[str]
+    audience: Optional[str]
+    length: Optional[str] # short, medium or long

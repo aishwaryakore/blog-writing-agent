@@ -108,23 +108,44 @@ def orchestrator_node(state: State) -> dict:
     evidence = state.get("evidence", [])
     mode = state.get("mode", "closed_book")
 
+    user_tone = state.get("tone")
+    user_audience = state.get("audience")
+    user_length = state.get("length")
+
+    length_hint = {
+        "short": "Keep the blog concise: 3–4 sections, ~800 words total.",
+        "medium": "Standard length: 5–7 sections, ~1500 words total.",
+        "long": "Comprehensive coverage: 7–9 sections, ~2500 words total.",
+    }.get(user_length, "")
+
+    user_prefs = ""
+    if user_tone:
+        user_prefs += f"- Tone: {user_tone}\n"
+    if user_audience:
+        user_prefs += f"- Audience: {user_audience}\n"
+    if length_hint:
+        user_prefs += f"- Length: {length_hint}\n"
+
     try:
         planner = llm.with_structured_output(Plan)
 
         plan = planner.invoke(
             [
                 SystemMessage(content=ORCHESTRATOR_PROMPT),
-                HumanMessage(
-                    content=(
-                        f"Topic: {state['topic']}\n"
-                        f"Mode: {mode}\n\n"
-                        f"Evidence (ONLY use for fresh claims; may be empty):\n"
-                        f"{[e.model_dump() for e in evidence][:16]}"
-                    )
-                ),
+                HumanMessage(content=(
+                f"Topic: {state['topic']}\n"
+                f"Mode: {mode}\n"
+                + (f"\nUser preferences (MUST follow these):\n{user_prefs}" if user_prefs else "")
+                + f"\nEvidence (ONLY use for fresh claims; may be empty):\n"
+                f"{[e.model_dump() for e in evidence][:16]}"
+            )),
             ]
         )
-
+        if user_tone:
+            plan.tone = user_tone
+        if user_audience:
+            plan.audience = user_audience
+            
         return {"plan": plan}
     except Exception as e:
         raise RuntimeError(f"Orchestrator failed: {e}") from e
