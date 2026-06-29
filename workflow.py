@@ -1,6 +1,10 @@
 from langgraph.graph import StateGraph, START, END
 from models import State
-from nodes import orchestrator_node, worker_node, reducer_node, fanout, router_node, research_node, route_next
+from nodes import (
+    orchestrator_node, worker_node, reducer_node, fanout,
+    router_node, research_node, route_next,
+    evaluator_node, route_after_eval, rewrite_fanout
+)
 
 def create_workflow():
     graph = StateGraph(State)
@@ -10,12 +14,24 @@ def create_workflow():
     graph.add_node("orchestrator", orchestrator_node)
     graph.add_node("worker", worker_node)
     graph.add_node("reducer", reducer_node)
+    graph.add_node("evaluator", evaluator_node)
 
     graph.add_edge(START, "router")
     graph.add_conditional_edges("router", route_next, {"research": "research", "orchestrator": "orchestrator"})
     graph.add_edge("research", "orchestrator")
     graph.add_conditional_edges("orchestrator", fanout, ["worker"])
     graph.add_edge("worker", "reducer")
-    graph.add_edge("reducer", END)
+    graph.add_edge("reducer", "evaluator")
+    graph.add_conditional_edges(
+        "evaluator",
+        lambda state: (
+            rewrite_fanout(state) if (
+                state.get("eval_result") and
+                not state["eval_result"].passed and
+                state.get("eval_attempts", 0) <= 1
+            ) else END
+        ),
+        ["worker", END]
+    )
 
     return graph.compile()

@@ -48,6 +48,19 @@ class RouterDecision(BaseModel):
 class EvidencePack(BaseModel):
     evidence: List[EvidenceItem] = Field(default_factory=list)
 
+class SectionFeedback(BaseModel):
+    section_title: str
+    issue: str = Field(..., description="One sentence describing what is weak or wrong.")
+    rewrite_instruction: str = Field(..., description="Specific instruction for the rewrite.")
+
+class EvalResult(BaseModel):
+    passed: bool = Field(..., description="True if the blog meets quality bar, False if rewrites needed.")
+    overall_feedback: str = Field(..., description="1-2 sentence summary of the evaluation.")
+    weak_sections: List[SectionFeedback] = Field(
+        default_factory=list,
+        description="List of sections that need rewriting. Empty if passed=True."
+    )
+
 class State(TypedDict):
     topic: str
     mode: str
@@ -61,3 +74,6 @@ class State(TypedDict):
     tone: Optional[str]
     audience: Optional[str]
     length: Optional[str] # short, medium or long
+    # evaluation
+    eval_result: Optional[EvalResult]
+    eval_attempts: int 

@@ -3,7 +3,6 @@ from typing import Optional
 from dotenv import load_dotenv
 load_dotenv()
 
-import asyncio
 import json
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -40,7 +39,9 @@ def get_initial_state(topic: str, tone=None, audience=None, length=None) -> dict
         "final": "",
         "tone": tone,
         "audience": audience,
-        "length": length
+        "length": length,
+        "eval_result": None,
+        "eval_attempts": 0,
     }
 
 NODE_LABELS = {
@@ -49,17 +50,16 @@ NODE_LABELS = {
     "orchestrator": "🗂️  Planning blog structure and sections...",
     "worker":       "✍️  Writing sections in parallel...",
     "reducer":      "📝 Assembling final blog post...",
+    "evaluator":    "🔎 Evaluating blog quality...",
 }
 
 async def stream_blog(topic: str, tone=None, audience=None, length=None):
-    """Generator that runs the LangGraph workflow and yields SSE events."""
-
-    initial_state = get_initial_state(topic)
+    initial_state = get_initial_state(topic, tone, audience, length)
     seen_nodes = set()
+    done_sent = False 
 
     try:
         for step in workflow.stream(initial_state):
-            # step is a dict like {"router": {"mode": "...", ...}}
             for name, update in step.items():
 
                 if name not in seen_nodes:
@@ -95,19 +95,32 @@ async def stream_blog(topic: str, tone=None, audience=None, length=None):
                             }),
                         }
 
+                if name == "evaluator" and isinstance(update, dict):
+                    result = update.get("eval_result")
+                    if result:
+                        if result.passed:
+                            status = "✅ Quality check passed!"
+                        else:
+                            status = f"⚠️ Rewriting {len(result.weak_sections)} weak section(s)..."
+                        yield {
+                            "event": "progress",
+                            "data": json.dumps({"node": "eval_result", "message": status}),
+                        }
+
                 if name == "reducer" and isinstance(update, dict):
                     final_blog = update.get("final", "")
                     if final_blog:
+                        done_sent = True
                         yield {
                             "event": "done",
                             "data": json.dumps({"blog": final_blog}),
                         }
-                        return
 
-        yield {
-            "event": "error",
-            "data": json.dumps({"message": "Pipeline completed but no output was produced."}),
-        }
+        if not done_sent:
+            yield {
+                "event": "error",
+                "data": json.dumps({"message": "Pipeline completed but no output was produced."}),
+            }
 
     except Exception as e:
         yield {
@@ -118,14 +131,6 @@ async def stream_blog(topic: str, tone=None, audience=None, length=None):
 
 @app.post("/generate")
 async def generate(request: GenerateRequest):
-    """
-    Stream a blog post generation as Server-Sent Events.
-
-    Events:
-      - progress: { node, message }  — pipeline stage updates
-      - done:     { blog }           — final markdown blog post
-      - error:    { message }        — something went wrong
-    """
     return EventSourceResponse(stream_blog(request.topic, request.tone, request.audience, request.length))
 
 

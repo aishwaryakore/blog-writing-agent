@@ -2,11 +2,11 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 from langgraph.types import Send
 from pathlib import Path
-from prompts import ORCHESTRATOR_PROMPT, WORKER_PROMPT, ROUTER_PROMPT, RESEARCH_PROMPT
+from prompts import ORCHESTRATOR_PROMPT, WORKER_PROMPT, ROUTER_PROMPT, RESEARCH_PROMPT, EVALUATOR_PROMPT
 from typing import List
 from langchain_community.tools.tavily_search import TavilySearchResults
 
-from models import Plan, State, RouterDecision, EvidencePack, Task, EvidenceItem
+from models import Plan, State, RouterDecision, EvidencePack, Task, EvidenceItem, EvalResult, SectionFeedback
 
 from dotenv import load_dotenv
 load_dotenv()
@@ -172,14 +172,22 @@ def worker_node(payload: dict) -> dict:
     evidence = [EvidenceItem(**e) for e in payload.get("evidence", [])]
     topic = payload["topic"]
     mode = payload.get("mode", "closed_book")
-
+    rewrite_instruction = payload.get("rewrite_instruction")
+    issue = payload.get("issue")
     bullets_text = "\n- " + "\n- ".join(task.bullets)
-
     evidence_text = ""
+
     if evidence:
         evidence_text = "\n".join(
             f"- {e.title} | {e.url} | {e.published_at or 'date:unknown'}".strip()
             for e in evidence[:20]
+        )
+
+    rewrite_context = ""
+    if rewrite_instruction:
+        rewrite_context = (
+            f"\nREWRITE INSTRUCTION: {rewrite_instruction}\n"
+            f"Previous version had this issue: {issue}\n"
         )
 
     try:
@@ -205,6 +213,7 @@ def worker_node(payload: dict) -> dict:
                         f"requires_code: {task.requires_code}\n"
                         f"Bullets:{bullets_text}\n\n"
                         f"Evidence (ONLY use these URLs when citing):\n{evidence_text}\n"
+                        f"{rewrite_context}"
                     )
                 ),
             ]
@@ -229,3 +238,66 @@ def reducer_node(state: State) -> dict:
         print(f"Warning: could not save file: {e}")
 
     return {"final": final_md}
+
+def rewrite_fanout(state: State):
+    eval_result = state["eval_result"]
+    plan = state["plan"]
+    task_by_title = {task.title.lower(): task for task in plan.tasks}
+
+    sends = []
+    for fb in eval_result.weak_sections:
+        task = task_by_title.get(fb.section_title.lower())
+        if not task:
+            continue
+        sends.append(Send("worker", {
+            "task": task.model_dump(),
+            "topic": state["topic"],
+            "mode": state["mode"],
+            "plan": state["plan"].model_dump(),
+            "evidence": [e.model_dump() for e in state.get("evidence", [])],
+            # Pass the rewrite instruction into the payload
+            "rewrite_instruction": fb.rewrite_instruction,
+            "issue": fb.issue,
+        }))
+    return sends
+
+def evaluator_node(state: State) -> dict:
+    plan = state["plan"]
+    final = state["final"]
+    mode = state.get("mode", "closed_book")
+    attempts = state.get("eval_attempts", 0)
+
+    if attempts >= 1:
+        return {
+            "eval_result": EvalResult(passed=True, overall_feedback="Max attempts reached, passing as-is."),
+            "eval_attempts": attempts,
+        }
+
+    try:
+        evaluator = llm.with_structured_output(EvalResult)
+        result = evaluator.invoke([
+            SystemMessage(content=EVALUATOR_PROMPT),
+            HumanMessage(content=(
+                f"Topic: {state['topic']}\n"
+                f"Audience: {plan.audience}\n"
+                f"Tone: {plan.tone}\n"
+                f"Mode: {mode}\n\n"
+                f"Blog:\n{final}"
+            )),
+        ])
+        return {
+            "eval_result": result,
+            "eval_attempts": attempts + 1,
+        }
+    except Exception as e:
+        return {
+            "eval_result": EvalResult(passed=True, overall_feedback=f"Evaluation skipped: {e}"),
+            "eval_attempts": attempts + 1,
+        }
+
+
+def route_after_eval(state: State) -> str:
+    result = state.get("eval_result")
+    if result and not result.passed and state.get("eval_attempts", 0) <= 1:
+        return "rewrite"
+    return "end"
